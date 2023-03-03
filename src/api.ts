@@ -85,6 +85,7 @@ class ChatGPT {
       });
     } else {
       res = await this._api.sendMessage(text, {
+        timeoutMs: 30000,
         ...this._context,
         ...(conversation && {
           conversationId: conversation.conversationId,
