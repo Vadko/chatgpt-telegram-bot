@@ -2,6 +2,7 @@ import type {ChatMessage as ChatResponseV4} from 'chatgpt';
 import type {ChatResponse as ChatResponseV3} from 'chatgpt-v3';
 import _ from 'lodash';
 import type TelegramBot from 'node-telegram-bot-api';
+import telegramifyMarkdown from 'telegramify-markdown';
 import type {ChatGPT} from '../api';
 import {BotOptions} from '../types';
 import {logWithTime} from '../utils';
@@ -13,6 +14,8 @@ class ChatHandler {
   protected _opts: BotOptions;
   protected _bot: TelegramBot;
   protected _api: ChatGPT;
+  protected _n_queued = 0;
+  protected _n_pending = 0;
   protected _apiRequestsQueue = new Queue(1, Infinity);
   protected _requestsQueue: Record<string, number> = {};
   protected _orderRequestsQueue = new Queue(20, Infinity);
@@ -36,42 +39,41 @@ class ChatHandler {
           : `group ${msg.chat.title} (${msg.chat.id})`;
       logWithTime(`📩 Message from ${userInfo} in ${chatInfo}:\n${text}`);
     }
-
     const replyContent =
-      msg.reply_to_message?.text ?? msg.reply_to_message?.caption;
+        msg.reply_to_message?.text ?? msg.reply_to_message?.caption;
     if (isReply && !replyContent) {
       await this._bot.sendMessage(
-        chatId,
-        'Це не реплай. ти кого найобуєш кожух?🎈✌️🎈✌️',
-        {
-          reply_to_message_id: msg.message_id,
-        }
+          chatId,
+          'Це не реплай. ти кого найобуєш кожух?🎈✌️🎈✌️',
+          {
+            reply_to_message_id: msg.message_id,
+          }
       );
       return Promise.resolve();
     } else {
-      const orderLength = this._apiRequestsQueue.getQueueLength() + 1;
-      // Send a message to the chat acknowledging receipt of their message
-      const reply = await this._bot.sendMessage(
-        chatId,
-        orderLength > 1 ? `You are #${orderLength} in order` : '🤔',
-        {
-          reply_to_message_id: msg.message_id,
-        }
-      );
+    // Send a message to the chat acknowledging receipt of their message
+    const reply = await this._bot.sendMessage(chatId, '⌛', {
+      reply_to_message_id: msg.message_id,
+    });
 
-      await this._bot.sendChatAction(chatId, 'typing');
+    // add to sequence queue due to chatGPT processes only one request at a time
+    const replyText = isReply ? replyContent : undefined;
+    const requestPromise = this._apiRequestsQueue.add(() => {
+      return this._sendToGpt(text, chatId, reply, replyText);
+    });
+    if (this._n_pending == 0) this._n_pending++;
+    else this._n_queued++;
+    this._positionInQueue[this._getQueueKey(chatId, reply.message_id)] =
+      this._n_queued;
 
-      // assign queue for request
-      this._requestsQueue[this._getQueueKey(chatId, reply.message_id)] =
-        orderLength;
-
-      const replyText = isReply ? replyContent : undefined;
-
-      // add to sequence queue due to chatGPT processes only one request at a time
-      await this._apiRequestsQueue.add(() => {
-        return this._sendToGpt(text, chatId, reply, replyText);
-      });
-    }
+    await this._bot.editMessageText(
+      this._n_queued > 0 ? `⌛: You are #${this._n_queued} in line.` : '🤔',
+      {
+        chat_id: chatId,
+        message_id: reply.message_id,
+      }
+    );
+    await requestPromise;
   };
 
   protected _sendToGpt = async (
@@ -81,9 +83,7 @@ class ChatHandler {
     replyText?: string
   ) => {
     let reply = originalReply;
-
-    // Update queue order before sending request to api
-    await this._updateQueue(chatId, originalReply.message_id);
+    await this._bot.sendChatAction(chatId, 'typing');
 
     // Send message to ChatGPT
     try {
@@ -121,6 +121,9 @@ class ChatHandler {
         "⚠️ Sorry, I'm having trouble connecting to the server, please try again later."
       );
     }
+
+    // Update queue order after finishing current request
+    await this._updateQueue(chatId, reply.message_id);
   };
 
   // Edit telegram message
@@ -133,10 +136,11 @@ class ChatHandler {
       return msg;
     }
     try {
+      text = telegramifyMarkdown(text);
       const res = await this._bot.editMessageText(text, {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
-        parse_mode: needParse ? 'Markdown' : undefined,
+        parse_mode: needParse ? 'MarkdownV2' : undefined,
       });
       // type of res is boolean | Message
       if (typeof res === 'object') {
@@ -163,16 +167,18 @@ class ChatHandler {
 
   protected _updateQueue = async (chatId: number, messageId: number) => {
     // delete value for current request
-    delete this._requestsQueue[this._getQueueKey(chatId, messageId)];
+    delete this._positionInQueue[this._getQueueKey(chatId, messageId)];
+    if (this._n_queued > 0) this._n_queued--;
+    else this._n_pending--;
 
-    for (const key in this._requestsQueue) {
+    for (const key in this._positionInQueue) {
       const {chat_id, message_id} = this._parseQueueKey(key);
-      this._requestsQueue[key]--;
-
-      // add to promise queue to avoid throttling
-      await this._orderRequestsQueue.add(() => {
+      this._positionInQueue[key]--;
+      this._updatePositionQueue.add(() => {
         return this._bot.editMessageText(
-          `You are #${this._requestsQueue[key]} in order`,
+          this._positionInQueue[key] > 0
+            ? `⌛: You are #${this._positionInQueue[key]} in line.`
+            : '🤔',
           {
             chat_id,
             message_id: Number(message_id),
