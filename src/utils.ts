@@ -64,6 +64,8 @@ function loadConfig(): Config {
       userIds: tryGet<number[]>('bot.userIds') || [],
       groupIds: tryGet<number[]>('bot.groupIds') || [],
       chatCmd: tryGet<string>('bot.chatCmd') || '/chat',
+      replyCmd: tryGet<string>('bot.replyCmd') || '/r',
+      chatCmdAlternate: tryGet<string>('bot.chatCmdAlternate') || '/c',
     },
     api: {
       type: apiType,

@@ -51,6 +51,7 @@
     "config": "^3.3.9",
     "dotenv": "^16.0.3",
     "extensionless": "^1.1.0",
+    "lmdb": "^2.7.9",
     "lodash": "^4.17.21",
     "node-telegram-bot-api": "^0.60.0",
     "puppeteer": "^19.7.2",

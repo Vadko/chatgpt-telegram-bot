@@ -14,6 +14,7 @@ import {
   APIUnofficialOptions,
 } from './types';
 import {logWithTime} from './utils';
+import {myDB} from './database';
 
 interface ChatContext {
   conversationId?: string;
@@ -68,9 +69,12 @@ class ChatGPT {
 
   sendMessage = async (
     text: string,
+    chatId: number,
     onProgress?: (res: ChatResponseV3 | ChatResponseV4) => void
   ) => {
     if (!this._api) return;
+
+    const conversation = myDB.get(chatId);
 
     let res: ChatResponseV3 | ChatResponseV4;
     if (this.apiType == 'official') {
@@ -84,6 +88,10 @@ class ChatGPT {
     } else {
       res = await this._api.sendMessage(text, {
         ...this._context,
+        ...(conversation && {
+          conversationId: conversation.conversationId,
+          parentMessageId: conversation.parentMessageId,
+        }),
         onProgress,
       });
     }
@@ -93,19 +101,20 @@ class ChatGPT {
         ? (res as ChatResponseV3).messageId
         : (res as ChatResponseV4).id;
 
-    this._context = {
+    await myDB.put(chatId, {
       conversationId: res.conversationId,
       parentMessageId: parentMessageId,
-    };
+    });
 
     return res;
   };
 
-  resetThread = async () => {
+  resetThread = async (chatId: number) => {
     if (this._apiBrowser) {
       await this._apiBrowser.resetThread();
     }
     this._context = {};
+    await myDB.remove(chatId);
   };
 
   refreshSession = async () => {

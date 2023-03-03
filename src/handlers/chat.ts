@@ -6,6 +6,7 @@ import type {ChatGPT} from '../api';
 import {BotOptions} from '../types';
 import {logWithTime} from '../utils';
 import Queue from 'promise-queue';
+import {myDB} from '../database';
 
 class ChatHandler {
   debug: number;
@@ -23,7 +24,7 @@ class ChatHandler {
     this._opts = botOpts;
   }
 
-  handle = async (msg: TelegramBot.Message, text: string) => {
+  handle = async (msg: TelegramBot.Message, text: string, isReply: boolean) => {
     if (!text) return;
 
     const chatId = msg.chat.id;
@@ -36,32 +37,48 @@ class ChatHandler {
       logWithTime(`📩 Message from ${userInfo} in ${chatInfo}:\n${text}`);
     }
 
-    const orderLength = this._apiRequestsQueue.getQueueLength() + 1;
-    // Send a message to the chat acknowledging receipt of their message
-    const reply = await this._bot.sendMessage(
-      chatId,
-      orderLength > 1 ? `You are #${orderLength} in order` : '🤔',
-      {
-        reply_to_message_id: msg.message_id,
-      }
-    );
+    const replyContent =
+      msg.reply_to_message?.text ?? msg.reply_to_message?.caption;
+    if (isReply && !replyContent) {
+      await this._bot.sendMessage(
+        chatId,
+        'Це не реплай. ти кого найобуєш кожух?🎈✌️🎈✌️',
+        {
+          reply_to_message_id: msg.message_id,
+        }
+      );
+      return Promise.resolve();
+    } else {
+      const orderLength = this._apiRequestsQueue.getQueueLength() + 1;
+      // Send a message to the chat acknowledging receipt of their message
+      const reply = await this._bot.sendMessage(
+        chatId,
+        orderLength > 1 ? `You are #${orderLength} in order` : '🤔',
+        {
+          reply_to_message_id: msg.message_id,
+        }
+      );
 
-    await this._bot.sendChatAction(chatId, 'typing');
+      await this._bot.sendChatAction(chatId, 'typing');
 
-    // assign queue for request
-    this._requestsQueue[this._getQueueKey(chatId, reply.message_id)] =
-      orderLength;
+      // assign queue for request
+      this._requestsQueue[this._getQueueKey(chatId, reply.message_id)] =
+        orderLength;
 
-    // add to sequence queue due to chatGPT processes only one request at a time
-    await this._apiRequestsQueue.add(() => {
-      return this._sendToGpt(text, chatId, reply);
-    });
+      const replyText = isReply ? replyContent : undefined;
+
+      // add to sequence queue due to chatGPT processes only one request at a time
+      await this._apiRequestsQueue.add(() => {
+        return this._sendToGpt(text, chatId, reply, replyText);
+      });
+    }
   };
 
   protected _sendToGpt = async (
     text: string,
     chatId: number,
-    originalReply: TelegramBot.Message
+    originalReply: TelegramBot.Message,
+    replyText?: string
   ) => {
     let reply = originalReply;
 
@@ -70,8 +87,10 @@ class ChatHandler {
 
     // Send message to ChatGPT
     try {
+      const body = replyText ? `${replyText}\n${text}` : text;
       const res = await this._api.sendMessage(
-        text,
+        body,
+        chatId,
         _.throttle(
           async (partialResponse: ChatResponseV3 | ChatResponseV4) => {
             const resText =
@@ -94,7 +113,10 @@ class ChatHandler {
       if (this.debug >= 1) logWithTime(`📨 Response:\n${resText}`);
     } catch (err) {
       logWithTime('⛔️ ChatGPT API error:', (err as Error).message);
-      this._bot.sendMessage(
+      if ((err as Error).message.includes('timed out')) {
+        await myDB.remove(chatId);
+      }
+      await this._bot.sendMessage(
         chatId,
         "⚠️ Sorry, I'm having trouble connecting to the server, please try again later."
       );

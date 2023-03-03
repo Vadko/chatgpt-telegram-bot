@@ -54,7 +54,7 @@ class CommandHandler {
 
       case '/reset':
         await this._bot.sendChatAction(msg.chat.id, 'typing');
-        await this._api.resetThread();
+        await this._api.resetThread(msg.chat.id);
         await this._bot.sendMessage(
           msg.chat.id,
           '🔄 The chat thread has been reset. New chat thread started.'
@@ -77,6 +77,13 @@ class CommandHandler {
           await this._bot.sendMessage(msg.chat.id, '🔄 Session refreshed.');
           logWithTime(`🔄 Session refreshed by ${userInfo}.`);
         }
+        break;
+
+      case '/start':
+        await this._bot.sendMessage(
+          msg.chat.id,
+          'Welcome to GPT bot. Please send plain text to receive GPT reply.'
+        );
         break;
 
       default:

@@ -5,6 +5,8 @@ export interface BotOptions {
   userIds: number[];
   groupIds: number[];
   chatCmd: string;
+  replyCmd: string;
+  chatCmdAlternate: string;
 }
 
 export interface APIBrowserOptions {
