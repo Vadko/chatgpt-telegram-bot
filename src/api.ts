@@ -81,16 +81,23 @@ class ChatGPT {
       if (!this._apiOfficial) return;
       res = await this._apiOfficial.sendMessage(text, {
         ...this._context,
+        ...(conversation?.parentMessageId &&
+          conversation?.conversationId && {
+            conversationId: conversation.conversationId,
+            parentMessageId: conversation.parentMessageId,
+          }),
+        timeoutMs: 50000,
         onProgress,
       });
     } else {
       res = await this._api.sendMessage(text, {
-        timeoutMs: 30000,
         ...this._context,
-        ...(conversation && {
-          conversationId: conversation.conversationId,
-          parentMessageId: conversation.parentMessageId,
-        }),
+        ...(conversation?.parentMessageId &&
+          conversation?.conversationId && {
+            conversationId: conversation.conversationId,
+            parentMessageId: conversation.parentMessageId,
+          }),
+        timeoutMs: 50000,
         onProgress,
       });
     }

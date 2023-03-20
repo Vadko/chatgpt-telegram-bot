@@ -7,8 +7,12 @@ processes = []
 
 [env]
 
+[mounts]
+  source = "tgbot_data"
+  destination = "/app/database"
+
 [deploy]
-  strategy = "rolling"
+  strategy = "immediate"
 
 [experimental]
   auto_rollback = true
